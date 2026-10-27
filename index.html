@@ -1,0 +1,228 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>College Library Management</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: Arial, sans-serif;
+  background: #f3f6fb; color: #17233c;
+}
+header {
+  background: #172b4d; color: white;
+  padding: 24px 6%; font-size: 24px; font-weight: bold;
+}
+main { max-width: 1100px; margin: 30px auto; padding: 0 18px; }
+.panel {
+  background: white; border-radius: 12px;
+  padding: 22px; margin-bottom: 22px;
+  box-shadow: 0 3px 14px #172b4d12;
+}
+h2 { margin-top: 0; }
+form { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+input, button {
+  padding: 12px; border-radius: 7px; font-size: 14px;
+}
+input { border: 1px solid #ccd5e3; width: 100%; }
+button {
+  border: 0; cursor: pointer; background: #2459c4;
+  color: white; font-weight: bold;
+}
+button:hover { opacity: .88; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions button { padding: 8px 10px; }
+.delete { background: #c43b47; }
+.cancel { background: #68758b; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 13px 10px; border-bottom: 1px solid #e6eaf0; }
+th { background: #edf2fa; }
+#message { margin: 12px 0; }
+@media(max-width:600px) {
+  form { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>📚 College Library Management System</header>
+<main>
+  <section class="panel">
+    <h2 id="formTitle">Add New Book</h2>
+    <form id="bookForm">
+      <input id="title" placeholder="Book title" required>
+      <input id="author" placeholder="Author name" required>
+      <input id="category" placeholder="Category">
+      <input id="quantity" type="number" min="0" value="1"
+             placeholder="Total quantity" required>
+      <div class="actions">
+        <button type="submit">Save Book</button>
+        <button type="button" class="cancel" id="cancel"
+                hidden>Cancel Edit</button>
+      </div>
+    </form>
+    <div id="message" role="status"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Book Records</h2>
+    <p id="count">Loading books...</p>
+    <div class="actions">
+      <input id="search" placeholder="Search title, author or category">
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Book</th><th>Author</th><th>Category</th>
+          <th>Total</th><th>Available</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="books"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+const API = "https://abc123.execute-api.ap-south-1.amazonaws.com";const $ = id => document.getElementById(id);
+let records = [];
+let editingId = null;
+
+async function request(path, options = {}) {
+  const res = await fetch(API + path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data;
+}
+
+function message(text, error = false) {
+  $("message").textContent = text;
+  $("message").style.color = error ? "#bd2635" : "#177245";
+}
+
+async function loadBooks() {
+  try {
+    records = await request("/books");
+    render();
+  } catch (e) {
+    message("Could not load books: " + e.message, true);
+    $("count").textContent = "Unable to connect to the API";
+  }
+}
+
+function render() {
+  const q = $("search").value.trim().toLowerCase();
+  const shown = records.filter(b =>
+    [b.title, b.author, b.category].some(v =>
+      String(v || "").toLowerCase().includes(q)
+    )
+  );
+  $("count").textContent = `${shown.length} book record(s)`;
+  const tbody = $("books");
+  tbody.replaceChildren();
+
+  shown.forEach(b => {
+    const tr = document.createElement("tr");
+    function cell(value) {
+      const td = document.createElement("td");
+      td.textContent = String(value ?? "");
+      tr.appendChild(td);
+    }
+    cell(b.title);
+    cell(b.author);
+    cell(b.category);
+    cell(b.quantity);
+    cell(b.available);
+
+    const td = document.createElement("td");
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const edit = document.createElement("button");
+    edit.textContent = "Edit";
+    edit.onclick = () => startEdit(b);
+    const del = document.createElement("button");
+    del.textContent = "Delete";
+    del.className = "delete";
+    del.onclick = () => deleteBook(b);
+    actions.append(edit, del);
+    td.appendChild(actions);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  });
+}
+
+function startEdit(b) {
+  editingId = b.bookId;
+  $("title").value = b.title;
+  $("author").value = b.author;
+  $("category").value = b.category || "";
+  $("quantity").value = b.quantity;
+  $("formTitle").textContent = "Update Book";
+  $("cancel").hidden = false;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function resetForm() {
+  editingId = null;
+  $("bookForm").reset();
+  $("quantity").value = 1;
+  $("formTitle").textContent = "Add New Book";
+  $("cancel").hidden = true;
+}
+
+$("bookForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const quantity = Number($("quantity").value);
+  if (!Number.isInteger(quantity) || quantity < 0) {
+    return message("Quantity must be a non-negative whole number.", true);
+  }
+
+  const book = {
+    title: $("title").value.trim(),
+    author: $("author").value.trim(),
+    category: $("category").value.trim() || "General",
+    quantity
+  };
+  try {
+    const path = editingId
+      ? "/books/" + encodeURIComponent(editingId)
+      : "/books";
+    await request(path, {
+      method: editingId ? "PUT" : "POST",
+      body: JSON.stringify(book)
+    });
+    message(editingId ? "Book updated successfully." : "Book added successfully.");
+    resetForm();
+    await loadBooks();
+  } catch (e) {
+    message(e.message, true);
+  }
+});
+
+async function deleteBook(b) {
+  if (!confirm(`Delete "${b.title}"?`)) return;
+  try {
+    await request("/books/" + encodeURIComponent(b.bookId), {
+      method: "DELETE"
+    });
+    message("Book deleted successfully.");
+    await loadBooks();
+  } catch (e) {
+    message(e.message, true);
+  }
+}
+
+$("cancel").addEventListener("click", resetForm);
+$("refresh").addEventListener("click", loadBooks);
+$("search").addEventListener("input", render);
+loadBooks();
+</script>
+</body>
+</html>
